@@ -65,6 +65,7 @@ static int seconds=5;
 static int formato=0;
 static int mrtg=0;
 static int calibration=0;
+static char *devicename = NULL; // contains the iProduct string if given per -s option
 
 
 void bad(const char *why) {
@@ -73,7 +74,8 @@ void bad(const char *why) {
 }
  
  
-usb_dev_handle *find_lvr_winusb();
+usb_dev_handle *find_lvr_winusb(int);
+usb_dev_handle *find_lvr_winusbS(const char*);
  
 void usb_detach(usb_dev_handle *lvr_winusb, int iInterface) {
         int ret;
@@ -111,7 +113,12 @@ usb_dev_handle* setup_libusb_access(int devicenum) {
      usb_find_devices();
              
  
-     if(!(lvr_winusb = find_lvr_winusb(devicenum))) {
+     if (devicename) 
+       lvr_winusb = find_lvr_winusbS(devicename);
+     else
+       lvr_winusb = find_lvr_winusb(devicenum);
+
+     if(!(lvr_winusb)) {
                 printf("Couldn't find the USB device, Exiting\n");
                 return NULL;
         }
@@ -167,7 +174,52 @@ usb_dev_handle *find_lvr_winusb(int devicenum) {
                                         printf("Could not open USB device\n");
                                         return NULL;
                                 }
+                                if (debug) {
+				  char string[256];
+				  int ret = usb_get_string_simple(handle, dev->descriptor.iProduct, string, sizeof(string));
+				  if (ret>0) 
+                                    printf("iProduct [%s]\n",string);
+				  else 
+                                    printf("cannot obtain iProduct\n");
+				}
                                 return handle;
+                        }
+                }
+        }
+        return NULL;
+}
+
+usb_dev_handle *find_lvr_winusbS(const char *devicename) {
+        // iterates to the devicenum'th device for installations with multiple sensors
+        struct usb_bus *bus;
+        struct usb_device *dev;
+	char string[256];
+	int res;
+ 
+        for (bus = usb_busses; bus; bus = bus->next) {
+        for (dev = bus->devices; dev; dev = dev->next) {
+                        if (dev->descriptor.idVendor == VENDOR_ID && 
+                                dev->descriptor.idProduct == PRODUCT_ID ) {
+                                usb_dev_handle *handle;
+                                if(debug) {
+                                  printf("lvr_winusb with Vendor Id: %x and Product Id: %x found.\n", VENDOR_ID, PRODUCT_ID);
+                                }
+ 
+                                if (!(handle = usb_open(dev))) {
+                                        printf("Could not open USB device\n");
+                                        return NULL;
+                                }
+				res = usb_get_string_simple(handle, dev->descriptor.iProduct, string, sizeof(string));
+                                if (debug) {
+				  if (res>0) 
+                                    printf("iProduct [%s]\n",string);
+				  else 
+                                    printf("cannot obtain iProduct\n");
+				}
+				if (res>0 && !strcmp(string,devicename)) {
+				  return handle;
+				}
+				usb_close(handle);
                         }
                 }
         }
@@ -320,7 +372,7 @@ int main( int argc, char **argv) {
      time_t t;
      int devicenum = 0;
 
-     while ((c = getopt (argc, argv, "mfcvhn:l::a:")) != -1)
+     while ((c = getopt (argc, argv, "mfcvhn:l::a:s:")) != -1)
      switch (c)
        {
        case 'v':
@@ -334,6 +386,12 @@ int main( int argc, char **argv) {
            }
          }
          break;
+       case 's':
+         if (optarg != NULL) {
+	   devicename = strdup(optarg);
+	   if (debug) printf("looking for iProduct [%s]\n", devicename);
+	 }
+	 else exit(EXIT_FAILURE);
        case 'c':
          formato=1; //Celsius
          break;
@@ -376,6 +434,7 @@ int main( int argc, char **argv) {
 	 printf("          -f output only in Fahrenheit\n");
 	 printf("          -a[n] increase or decrease temperature in 'n' degrees for device calibration\n");
 	 printf("          -m output for mrtg integration\n");
+	 printf("          -s<name> search for device with this name (see iProduct in lsusb), overwrites -n\n");
   
 	 exit(EXIT_FAILURE);
        default:
